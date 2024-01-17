@@ -1,5 +1,10 @@
 // ignore_for_file: unused_local_variable
 
+import 'dart:io';
+
+import 'package:chat_app/widgets/user_image_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -13,24 +18,45 @@ class AuthScreen extends StatefulWidget {
 }
 
 class _AuthScreenState extends State<AuthScreen> {
-  var _isLogin = true;
   final _formKey = GlobalKey<FormState>();
+
+  var _isLogin = true;
   var _enteredEmail = '';
   var _enteredPassword = '';
+  var _enteredUsername = '';
+  var _isAuthenticating = false;
+  File? _selectedImage;
 
   void _submit() async {
     final isValid = _formKey.currentState!.validate();
 
-    if (!isValid) return;
+    if (!isValid || !_isLogin && _selectedImage == null) return;
 
     _formKey.currentState!.save();
     try {
+      setState(() {
+        _isAuthenticating = true;
+      });
       if (_isLogin) {
         final userCredentials = await _firebase.signInWithEmailAndPassword(
             email: _enteredEmail, password: _enteredPassword);
       } else {
         final userCredentials = await _firebase.createUserWithEmailAndPassword(
             email: _enteredEmail, password: _enteredPassword);
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('user_images')
+            .child('${userCredentials.user!.uid}.jpg');
+        await storageRef.putFile(_selectedImage!);
+        final imageUrl = await storageRef.getDownloadURL();
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredentials.user!.uid)
+            .set({
+          'username': _enteredUsername,
+          'email': _enteredEmail,
+          'image_url': imageUrl
+        });
       }
     } on FirebaseAuthException catch (error) {
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -39,6 +65,9 @@ class _AuthScreenState extends State<AuthScreen> {
           content: Text(error.message ?? 'Authentification error.'),
         ),
       );
+      setState(() {
+        _isAuthenticating = false;
+      });
     }
   }
 
@@ -69,6 +98,10 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Form(
                       key: _formKey,
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        if (!_isLogin)
+                          UserImagePicker(onPickImage: (image) {
+                            _selectedImage = image;
+                          }),
                         TextFormField(
                           decoration: const InputDecoration(
                             label: Text('Email Address'),
@@ -88,6 +121,24 @@ class _AuthScreenState extends State<AuthScreen> {
                             _enteredEmail = value!;
                           },
                         ),
+                        if (!_isLogin)
+                          TextFormField(
+                            decoration: const InputDecoration(
+                              label: Text('Username'),
+                            ),
+                            enableSuggestions: false,
+                            validator: (value) {
+                              if (value == null ||
+                                  value.isEmpty ||
+                                  value.trim().length < 4) {
+                                return 'Please enter a valid username (at least 4 characters)';
+                              }
+                              return null;
+                            },
+                            onSaved: (value) {
+                              _enteredUsername = value!;
+                            },
+                          ),
                         TextFormField(
                           decoration: const InputDecoration(
                             label: Text('Password'),
@@ -105,24 +156,29 @@ class _AuthScreenState extends State<AuthScreen> {
                             _enteredPassword = value!;
                           },
                         ),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Theme.of(context).colorScheme.primaryContainer,
+                        if (_isAuthenticating)
+                          const CircularProgressIndicator(),
+                        if (!_isAuthenticating)
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .primaryContainer,
+                            ),
+                            onPressed: _submit,
+                            child: Text(_isLogin ? "Login" : "Sign up"),
                           ),
-                          onPressed: _submit,
-                          child: Text(_isLogin ? "Login" : "Sign up"),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _isLogin = !_isLogin;
-                            });
-                          },
-                          child: Text(_isLogin
-                              ? "Create an account"
-                              : "I already have an account"),
-                        ),
+                        if (!_isAuthenticating)
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _isLogin = !_isLogin;
+                              });
+                            },
+                            child: Text(_isLogin
+                                ? "Create an account"
+                                : "I already have an account"),
+                          ),
                       ]),
                     ),
                   ),
